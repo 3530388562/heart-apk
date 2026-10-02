@@ -16,7 +16,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # GitHub 的 ubuntu-latest 已自带 Android SDK，这里只设置环境变量，避免 sdkmanager 装包失败
+      - name: Set Android SDK path
+        run: echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew || true
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
