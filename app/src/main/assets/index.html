@@ -594,7 +594,7 @@
       return sphereAuroraColor(hy);         // 球型极光：未调色走默认素雅；调色后跟随顶/底色盘
     }
     if (SHAPE === 'balance') return SOLID ? COL_SOLID : diamondColor(idx);
-    return colorByHeight(hy);
+    return SOLID ? COL_SOLID : colorByHeight(hy);   // 纯色模式整颗心单一色（含默认心形）；切黑则变黑隐身，形成干净夜空
   }
 
   // 球型极光配色（素雅清冷）：淡紫青、低饱和、颜色沿高度温润流动，与原/均衡饱满解耦
@@ -638,13 +638,13 @@
      已归位的粒子全部参与 → 成型后的爱心依然饱满密实。 */
   PARTICLE_STYLE = 'grain';        // 声明已提前到 PRESETS 上方（sampleTarget 顶层执行时要读它）
   const SPHERE_BANDS = 24;         // 高度分档数
-  const SPHERE_STRIDE = 13;        // 重聚飞行中抽样间隔：每 13 颗画 1 颗（约 1000 颗，原 24 → 542 颗）
+  const SPHERE_STRIDE = 18;        // 重聚飞行中抽样间隔：每 18 颗画 1 颗（约 722 颗，较原 13 → 1000 颗更少、更清爽）
   const SPHERE_FW_STRIDE_UP = 7;   // 烟花·向上飞的那批（约 930 颗）：上方烟瓣适度加厚，落下时成流星
   const SPHERE_FW_STRIDE_DOWN = 12;// 烟花·起爆即朝下的那批（约 540 颗）：更清爽，不与流星抢视线
   const LOCK_EASE = 10;            // 锁定后收尾缓动帧数：彗星光晕平滑收成小圆点（消除"啪一下缩掉"的跳变）
   const LOCK_DIST = 7;             // 吸附阈值（px）：d≤此值即进入落地缓冲，略大于 6 以减少临界阻尼末段"蜗行"
   const LAND_SPREAD = 28;          // 落地缓冲随机错峰帧数：粒子各自延迟 0~28 帧才真正锁定 → 打散"尾部成批咔到位"的台阶感
-  const SPHERE_SIZE_MUL = 4.2;     // 球直径 = 粒径 × 倍数（球数减少 → 体积相应增大，覆盖不减）
+  const SPHERE_SIZE_MUL = 5.8;     // 球直径 = 粒径 × 倍数（球数减少 → 体积相应增大，覆盖不减；配合 STRIDE=18 补回覆盖）
   const SPHERE_TRAIL = 4;          // 运动拖尾层数
   const SPHERE_TRAIL_A = 0.55;     // 拖尾基础亮度（越接近球体越明显）
   const SPHERE_ALPHA_MUL = 1.18;   // 球型整体加浓：比颗粒更实、更重
@@ -1017,7 +1017,7 @@
       stroke.pts.push({ x, y, t: performance.now() });
       stroke.lastT = performance.now();   // 刷新寿命计时，划动中整条始终完整显示
       // 从按下点到当前点划出足够距离才算「切」，几像素的点击抖动不会误切
-      if (Math.hypot(x - downX, y - downY) >= MIN_CUT && cutHitsHeart(lastX, lastY, x, y)) scatter(swipeDX, swipeDY);
+      if (!fwActive && Math.hypot(x - downX, y - downY) >= MIN_CUT && cutHitsHeart(lastX, lastY, x, y)) scatter(swipeDX, swipeDY);
     }
     lastX = x; lastY = y;
   });
@@ -1026,11 +1026,12 @@
     swiping = false;
     // 位移未达切割距离 → 一律算轻点（点击抖动也有反馈，绝不误切）
     if (Math.hypot(e.clientX - downX, e.clientY - downY) < MIN_CUT) {
+      if (fwActive) { endNight(); return; }   // 烟花释放期间点击 → 立即结束烟花，随后自动切割+重聚
       if (!heartReady) return;                                    // 爱心未成型：轻点不迸发粒子
       // 已散落 → 必须等全部颗粒落定（躺在屏幕底下 / 烟花飞出屏幕）才允许复原；
       // 未落定时点击只迸发一小簇火星做「已收到点击」的反馈，不打断坠落过程
       if (scattered) {
-        if (allSettled()) { reform(); return; }
+        if (allSettled()) { reform(); fwAutoReform = false; return; }
         for (let i = 0; i < 26; i++) {
           const a = Math.random() * Math.PI * 2, sp = rand(0.6, 2.4), c = pinkStyle();
           sparks.push({ x: e.clientX, y: e.clientY, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.6,
@@ -1082,7 +1083,10 @@
     // 点击那一刻 heartReady 为 false 而被丢弃（之前只在点击瞬间判断，导致判定前点击不生效）。
     if (pendingShape !== null && heartReady && !scattered) applyShapeImmediate();
 
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.36)';
+    // 纯色切黑（夜空）时：不透明黑清屏 → 彻底去除爱心拖尾/虚影；其它颜色保持 0.36 拖尾观感
+    if (fwAutoReform && scattered && allSettled()) { reform(); fwAutoReform = false; }
+    const fwBlack = SOLID && Math.max(COL_SOLID.r, COL_SOLID.g, COL_SOLID.b) < 28;
+    ctx.fillStyle = fwBlack ? '#000' : 'rgba(0, 0, 0, 0.36)';
     ctx.fillRect(0, 0, W, H);
 
     // 比耶 ✌ 触发的流星雨（离屏透明层，最底层背景；一阵放完自动停，不影响爱心拖尾）
@@ -1112,8 +1116,8 @@
       drawSandBatch(-1e9, 0);   // 后方粒子（z<0）：先画，被爱心遮
     }
 
-    // 成型 + 未散落 + 开启心跳：每次心跳脉冲（咚-哒）从轮廓向外迸发一簇粒子
-    if (BEAT && heartReady && !scattered) {
+    // 成型 + 未散落 + 开启心跳：每次心跳脉冲（咚-哒）从轮廓向外迸发一簇粒子（夜空模式跳过，避免黑底上冒粉点）
+    if (BEAT && heartReady && !scattered && !fwBlack) {
       const bv = heartbeat(now);
       if (prevBeat <= 0.5 && bv > 0.5) beatBurst(scaleNow);   // 上升沿触发一次迸发
       prevBeat = bv;
@@ -1466,7 +1470,7 @@
     // 虚影拖尾：用漂移的解析导数求运动方向，沿反方向画多层渐隐“影子心形”
     // 多层、越远越淡 → 形成有渐变感、更明显的连续虚影（不扩散成雾）
     // 球型模式关闭虚影：粒子本身已带彩带拖尾，再叠一层影子心形会显脏、破坏凌冽感
-    if (!scattered && HEART_POSE !== 'spin' && PARTICLE_STYLE !== 'sphere') {   // spin 姿态下爱心在 3D 转，虚影按屏幕平面画会穿帮，故关闭
+    if (!scattered && HEART_POSE !== 'spin' && PARTICLE_STYLE !== 'sphere' && !fwBlack) {   // 纯色切黑(夜空)时跳过影子：爱心隐身、无粉红虚影；其它颜色保留
       const k1 = Math.cos(now * 0.00034) * 0.00034 * 44 + Math.cos(now * 0.0007 + 1.3) * 0.0007 * 27;
       const k2 = Math.cos(now * 0.0004 + 2.1) * 0.0004 * 35 + Math.cos(now * 0.0008 + 0.4) * 0.0008 * 23;
       const ml = Math.hypot(k1, k2) || 1;
@@ -1583,6 +1587,8 @@
     }
 
     ctx.globalCompositeOperation = 'source-over';
+    // 烟花层（纯色切黑 → 夜空模式）：透明离屏层合成到最前，不黑屏、不影响爱心
+    if (fwActive) { fwUpdateDraw(); ctx.drawImage(fwCanvas, 0, 0, W, H); }
     requestAnimationFrame(loop);
   }
 
@@ -1738,8 +1744,8 @@
 
   // ===== 比耶 ✌ 触发流星雨（离屏透明层 · 一阵即止 · 含银色闪星）=====
   const METEOR_STYLES = {
-    minimal: { density:.34, max:16, speed:[11,18], len:[160,360], width:[.8,1.4], angMin:.45, angMax:1.05, glow:0,   head:false, cols:[[255,255,255],[218,230,255]] },
-    warm:    { density:.40, max:12, speed:[8,14],  len:[170,420], width:[1,2.4],  angMin:.40, angMax:1.00, glow:.9,  head:true, headScale:1.1, cols:[[255,210,170],[255,180,200],[255,230,190]] }
+    minimal: { density:.34, max:16, speed:[15,24], len:[160,360], width:[.8,1.4], angMin:.45, angMax:1.05, glow:0,   head:false, cols:[[255,255,255],[218,230,255]] },
+    warm:    { density:.40, max:12, speed:[11,19], len:[170,420], width:[1,2.4],  angMin:.40, angMax:1.00, glow:.9,  head:true, headScale:1.1, cols:[[255,210,170],[255,180,200],[255,230,190]] }
   };
   let meteorActive = false, meteorTimer = 0, meteorCool = 0, meteorStyle = 'minimal';
   const meteors = [], flares = [];
@@ -1838,6 +1844,7 @@
       return;
     }
     handGone = 0;
+    if (fwActive) return;   // 烟花释放期间禁用所有手势（比耶/握拳/张开均不响应）
     const lm = res.multiHandLandmarks[0];
     // 比耶 ✌ 优先：需连续保持约 5 帧才触发（握拳→张开过渡态一晃而过、凑不满帧数），防连发靠 meteorCool
     if (checkPeace(lm)) {
@@ -1851,7 +1858,7 @@
     } else if (checkFist(lm)) {
       peaceHold = 0;
       // 张开 → 握拳：复原。需碎片已落定（与点击复原同一条件），未落定时握拳先不生效
-      if (openSeen && scattered && allSettled()) { reform(); handCool = 30; }   // 重聚：同样让路 0.5s
+      if (openSeen && scattered && allSettled()) { reform(); handCool = 10; }   // 重聚：仅让路 0.17s，比耶几乎立刻可用；散开的 45 帧保留防卡顿
       openSeen = false; fistSeen = true;
     } else if (checkOpenHand(lm)) {
       peaceHold = 0;
@@ -1947,6 +1954,159 @@
     gestureBtn.textContent = '手势';
   }
   gestureBtn.addEventListener('click', () => { handEnabled ? disableGesture() : enableGesture(); });
+
+  // ========== 烟花系统：纯色切黑 → 夜空模式自动绽放 ==========
+  const fwCanvas = document.createElement('canvas');
+  const fctx = fwCanvas.getContext('2d');
+  function fwResize(){ fwCanvas.width = W; fwCanvas.height = H; }
+  fwResize();
+  window.addEventListener('resize', fwResize);
+
+  // 基础款：basic 普通 / chrys 菊 / real 真实彗星（移植自参考页，去 bg/trail，用透明层承担）
+  const FW = {
+    willow:   { group:'basic', count:90,  speedMin:1.4, speedMax:3.8, gravity:0.075, drag:0.985, trailLen:16, lifeMin:100, lifeMax:165, sizeMin:0.9, sizeMax:1.6, colors:[[255,200,90],[255,170,60],[255,222,140]], multi:false },
+    gold:     { group:'basic', count:100, speedMin:2,   speedMax:6.5, gravity:0.04,  drag:0.97,  trailLen:12, lifeMin:55,  lifeMax:95,  sizeMin:0.8, sizeMax:1.5, colors:[[255,225,150],[255,200,110]], multi:false },
+    minimal:  { group:'basic', count:60,  speedMin:2.5, speedMax:5,   gravity:0.03,  drag:0.95,  trailLen:12, lifeMin:50,  lifeMax:90,  sizeMin:0.6, sizeMax:1.2, colors:[[255,255,255],[210,225,255]], multi:false },
+    warm:     { group:'basic', count:90,  speedMin:2,   speedMax:6,   gravity:0.04,  drag:0.97,  trailLen:12, lifeMin:55,  lifeMax:95,  sizeMin:0.8, sizeMax:1.5, colors:[[255,150,170],[255,200,150],[255,180,200]], multi:false },
+    cool:     { group:'basic', count:90,  speedMin:2,   speedMax:6,   gravity:0.04,  drag:0.97,  trailLen:12, lifeMin:55,  lifeMax:95,  sizeMin:0.7, sizeMax:1.4, colors:[[90,180,255],[120,220,255],[150,255,200]], multi:false },
+    redgold:  { group:'basic', count:110, speedMin:2,   speedMax:6.5, gravity:0.04,  drag:0.97,  trailLen:12, lifeMin:55,  lifeMax:95,  sizeMin:0.8, sizeMax:1.6, colors:[[255,70,70],[255,200,110]], multi:true },
+    violet:   { group:'basic', count:90,  speedMin:2,   speedMax:6,   gravity:0.04,  drag:0.97,  trailLen:12, lifeMin:55,  lifeMax:95,  sizeMin:0.7, sizeMax:1.4, colors:[[180,120,255],[150,90,255],[200,160,255]], multi:false },
+    longline: { group:'basic', count:70,  speedMin:2.5, speedMax:5.5, gravity:0.028, drag:0.96,  trailLen:18, lifeMin:70,  lifeMax:120, sizeMin:0.5, sizeMax:1.1, colors:[[255,255,255]], multi:false },
+    chrysGold:   { group:'chrys', count:150, layers:[[6.5,8.5],[4,5.5],[2.2,3.2]], gravity:0.04, drag:0.965, trailLen:12, lifeMin:58, lifeMax:105, sizeMin:0.5, sizeMax:1.1, colors:[[255,200,110],[255,225,150]], multi:false, secondary:true, splitChance:0.14 },
+    chrysSilver: { group:'chrys', count:150, layers:[[6.5,8.5],[4,5.5],[2.2,3.2]], gravity:0.04, drag:0.965, trailLen:12, lifeMin:58, lifeMax:105, sizeMin:0.5, sizeMax:1.1, colors:[[255,255,255],[210,225,255]], multi:false, secondary:true, splitChance:0.14 },
+    realGold:   { group:'real', count:150, speedMin:2.5, speedMax:7, gravity:0.03,  drag:0.975, trailLen:24, lifeMin:72, lifeMax:125, sizeMin:1.6, sizeMax:3.0, colors:[[255,200,110],[255,225,150],[255,180,80]], comet:true },
+    realSilver: { group:'real', count:150, speedMin:2.5, speedMax:7, gravity:0.028, drag:0.975, trailLen:24, lifeMin:72, lifeMax:125, sizeMin:1.5, sizeMax:2.7, colors:[[255,255,255],[210,225,255]], comet:true },
+    realRed:    { group:'real', count:150, speedMin:2.5, speedMax:7, gravity:0.03,  drag:0.975, trailLen:24, lifeMin:72, lifeMax:125, sizeMin:1.6, sizeMax:2.9, colors:[[255,70,70],[255,120,90]], comet:true },
+    realBlue:   { group:'real', count:150, speedMin:2.5, speedMax:7, gravity:0.028, drag:0.975, trailLen:24, lifeMin:72, lifeMax:125, sizeMin:1.5, sizeMax:2.7, colors:[[90,180,255],[120,220,255]], comet:true }
+  };
+
+  const fwRockets = [], fwParts = [];
+  const FW_MAX = 3200;
+  const fwRnd = (a,b)=> a + Math.random()*(b-a);
+  const fwPick = a => a[(Math.random()*a.length)|0];
+
+  // 三类概率（普通最常用 / 真实次之 / 菊稀少）+ 各类内部组合数量概率
+  function pickCombo(){
+    const r = Math.random();
+    let pool, nMax, singleP, doubleP;
+    if(r < 0.55){ pool=['willow','gold','minimal','warm','cool','redgold','violet','longline']; singleP=0.45; doubleP=0.40; nMax=3; }
+    else if(r < 0.75){ pool=['chrysGold','chrysSilver']; singleP=0.40; doubleP=0.60; nMax=2; }  // 菊：双色(金+银)比例高，像红金国风
+    else { pool=['realGold','realSilver','realRed','realBlue']; singleP=0.40; doubleP=0.40; nMax=3; }
+    const rr = Math.random();
+    let n = 1;
+    if(nMax>=3 && rr>singleP+doubleP) n = 3;
+    else if(rr>singleP) n = 2;
+    const combo = [], tmp = pool.slice();   // 随机 n 个不重复基础款叠加（共享爆炸中心 → 多色组合）
+    while(combo.length<n && tmp.length) combo.push(tmp.splice((Math.random()*tmp.length)|0,1)[0]);
+    return combo;
+  }
+
+  function fwLaunch(combo){
+    const first = FW[combo[0]];
+    const sx = fwRnd(W*0.15, W*0.85);
+    const ty = fwRnd(H*0.12, H*0.45);
+    fwRockets.push({ x:sx, y:H+8, vx:fwRnd(-1,1), vy:-fwRnd(9,12.5), ty, color:fwPick(first.colors), hist:[], combo });
+  }
+
+  function fwExplode(x, y, combo){
+    for(const key of combo){
+      const s = FW[key];
+      const baseColor = fwPick(s.colors);
+      const n = s.count;
+      for(let i=0;i<n;i++){
+        let ang, sp;
+        if(s.ring){ ang=(i/n)*Math.PI*2; sp=(s.speedMin+s.speedMax)/2; }
+        else if(s.layers){ const L=fwPick(s.layers); ang=fwRnd(0,Math.PI*2); sp=fwRnd(L[0],L[1]); }
+        else { ang=fwRnd(0,Math.PI*2); sp=fwRnd(s.speedMin,s.speedMax); }
+        const color = s.multi ? fwPick(s.colors) : baseColor;
+        const life = fwRnd(s.lifeMin, s.lifeMax);
+        const canSplit = !!(s.secondary && Math.random() < (s.splitChance||0.14));
+        fwParts.push({ x, y, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp, life, maxLife:life, color, size:fwRnd(s.sizeMin,s.sizeMax), flick:Math.random()<0.30, split:canSplit, splitLife:canSplit?life*fwRnd(0.42,0.58):0, didSplit:false, hist:[], comet:!!s.comet, trailLen:s.trailLen||12, gravity:s.gravity, drag:s.drag });
+      }
+    }
+  }
+
+  function fwDrawTrail(hist, c, width, alpha){
+    const col = `rgb(${c[0]},${c[1]},${c[2]})`;
+    const n = hist.length;
+    fctx.globalAlpha = alpha;
+    fctx.strokeStyle = col; fctx.fillStyle = col;
+    fctx.lineCap='round'; fctx.lineJoin='round';
+    if(n<2){ if(n===1){ if(hist[0].comet) fwDrawHead(hist[0],width,c,alpha); else { fctx.beginPath(); fctx.arc(hist[0].x,hist[0].y,width,0,7); fctx.fill(); } } return; }
+    if(hist[0].comet){
+      for(let k=0;k<n-1;k++){ const t=1-k/(n-1); fctx.lineWidth=Math.max(0.6, width*(0.12+1.0*t)); fctx.beginPath(); fctx.moveTo(hist[k].x,hist[k].y); fctx.lineTo(hist[k+1].x,hist[k+1].y); fctx.stroke(); }
+      fwDrawHead(hist[0],width,c,alpha);
+    } else { fctx.lineWidth=width; fctx.beginPath(); fctx.moveTo(hist[0].x,hist[0].y); for(let k=1;k<n;k++) fctx.lineTo(hist[k].x,hist[k].y); fctx.stroke(); }
+  }
+  function fwDrawHead(h, w, c, a){ fctx.globalAlpha=a; fctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`; fctx.beginPath(); fctx.ellipse(h.x,h.y,w*1.3,w*0.9,0,0,7); fctx.fill(); }
+
+  let fwActive = false;
+  function fwUpdateDraw(){
+    fctx.clearRect(0,0,W,H);
+    fctx.globalCompositeOperation='lighter';
+    for(let i=fwRockets.length-1;i>=0;i--){
+      const r=fwRockets[i]; r.vy+=0.14; r.x+=r.vx; r.y+=r.vy;
+      r.hist.unshift({x:r.x,y:r.y,comet:false}); if(r.hist.length>6) r.hist.pop();
+      fwDrawTrail(r.hist, r.color, 1.6, 1);
+      if(r.vy>=-1.2 || r.y<=r.ty){ fwExplode(r.x,r.y,r.combo); fwRockets.splice(i,1); }
+    }
+    for(let i=fwParts.length-1;i>=0;i--){
+      const p=fwParts[i];
+      p.vx*=p.drag; p.vy*=p.drag; p.vy+=p.gravity; p.x+=p.vx; p.y+=p.vy;
+      if(p.split && !p.didSplit && p.life<=p.splitLife){
+        const fn=5+(Math.random()*4|0);
+        for(let j=0;j<fn;j++){ const a2=fwRnd(0,Math.PI*2), s2=fwRnd(1,2.6), l2=fwRnd(24,44); fwParts.push({x:p.x,y:p.y,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:l2,maxLife:l2,color:p.color,size:fwRnd(0.4,0.9),flick:true,split:false,didSplit:false,hist:[],comet:p.comet,trailLen:p.trailLen,gravity:0.05,drag:0.95}); }
+        p.didSplit=true; fwParts.splice(i,1); continue;
+      }
+      p.life--; if(p.life<=0){ fwParts.splice(i,1); continue; }
+      p.hist.unshift({x:p.x,y:p.y,comet:p.comet}); if(p.hist.length>p.trailLen) p.hist.pop();
+      let a=p.life/p.maxLife; if(p.flick && a<0.6) a*=(0.35+Math.random()*0.65);
+      fwDrawTrail(p.hist, p.color, p.size, a);
+    }
+    if(fwParts.length>FW_MAX) fwParts.splice(0, fwParts.length-FW_MAX);
+    fctx.globalCompositeOperation='source-over'; fctx.globalAlpha=1;
+  }
+
+  function fwAutoFire(){
+    if(!fwActive) return;
+    const burst = 1 + (Math.random()<0.4?1:0);   // 偶发双发
+    for(let k=0;k<burst;k++) fwLaunch(pickCombo());
+    setTimeout(fwAutoFire, fwRnd(650,1300));      // 稀疏：时不时来几朵
+  }
+
+  let fwEndTimer = null, fwAutoReform = false;
+
+  // 颜色复位为初始（白顶粉底渐变）：关掉纯色、清 colorTouched，所有在场粒子/球型贴图同步
+  function resetInitialColor(){
+    if (SOLID) { SOLID = false; solidBtn.classList.remove('on'); colorbox.classList.remove('solid'); }
+    colorTouched = false;
+    for (const p of heart) { const c = shapeColor(p.hy, p.idx); p.r = c.r; p.g = c.g; p.b = c.b; p.st = null; }
+    if (PARTICLE_STYLE === 'sphere') buildSphereSprites();
+  }
+
+  // 夜空结束：停发烟花 → 颜色复位为初始 → 自动切割 → 置位「落定后自动重聚」
+  function endNight(){
+    if (!fwActive) return;
+    fwActive = false;
+    if (fwEndTimer) { clearTimeout(fwEndTimer); fwEndTimer = null; }
+    fwRockets.length = 0; fwParts.length = 0;          // 清场，干净交接到爱心切割
+    resetInitialColor();
+    if (!scattered && heartReady) { scatter(0, 0); fwAutoReform = true; }   // 自动切割，随后自动重聚
+  }
+
+  // 颜色切黑 → 夜空模式：SOLID（纯色模式）且纯色接近黑时开启，否则关闭
+  function fwCheckNight(){
+    const on = SOLID && Math.max(COL_SOLID.r, COL_SOLID.g, COL_SOLID.b) < 28;
+    if (on && !fwActive) {
+      fwActive = true;
+      fwAutoFire();
+      fwEndTimer = setTimeout(endNight, 12000);        // 约 12 秒后自动结束 → 切割+复位+重聚
+    } else if (!on && fwActive) {
+      endNight();                                      // 手动切回非黑：同样走结束流程
+    }
+  }
+  colSolid.addEventListener('input', fwCheckNight);
+  solidBtn.addEventListener('click', ()=> setTimeout(fwCheckNight, 0));   // 纯色开关翻转后再判定
 
   requestAnimationFrame(loop);
 })();
