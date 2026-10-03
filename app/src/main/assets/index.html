@@ -41,6 +41,8 @@
     white-space: nowrap; transition: background .15s;
   }
   #panel .menu button.on { background: rgba(255,120,170,0.88); border-color: rgba(255,150,190,0.95); }
+  /* 菜单内分隔线：区分「粒子样式」与「形状」两组选项 */
+  #panel .menu .divider { height: 1px; margin: 2px 0; background: rgba(255,255,255,0.22); }
   /* 颜色调节器：位于顶部按钮行内「动作」按钮右侧，随面板排版流动（不再固定定位，永不遮挡按钮） */
   #colorbox { display: flex; align-items: center; gap: 10px;
     font: 13px/1 -apple-system, system-ui, "PingFang SC", sans-serif; color: #fff;
@@ -70,13 +72,14 @@
       <button data-m="bottom">自下而上</button>
     </div>
   </div>
-  <button data-s="origin" class="on">原版形状</button>
-  <button data-s="balance">均衡饱满</button>
   <div class="dropdown" id="ddStyle">
-    <button class="dropbtn">粒子效果 ▾</button>
+    <button class="dropbtn">外观 ▾</button>
     <div class="menu">
-      <button data-style="grain" class="on">颗粒</button>
-      <button data-style="sphere">球型</button>
+      <button data-style="grain" class="on">颗粒粒子</button>
+      <button data-style="sphere">球型粒子</button>
+      <div class="divider"></div>
+      <button data-s="origin" class="on">原版形状</button>
+      <button data-s="balance">均衡饱满</button>
     </div>
   </div>
   <div class="dropdown" id="ddSand">
@@ -106,6 +109,7 @@
     </div>
   </div>
   <button id="gestureBtn">手势</button>
+  <button id="previewBtn" title="显示/隐藏右下角的摄像头预览窗（默认关闭，识别照常后台运行）">预览</button>
   <!-- 颜色调节器：紧跟在「动作」按钮右侧（同一行内流动排版） -->
   <div id="colorbox">
     <label class="grad">顶部<input type="color" id="colTop" value="#ffffff"></label>
@@ -279,6 +283,7 @@
         // 注意：落地后 vx 是极小的非零浮点（*=0.5 永远到不了 0），必须用阈值判断「还在飞」
         if (Math.abs(p.vx) + Math.abs(p.vy) > 0.05) {
           p.fw = true; p.floorY = Infinity;
+          p.fwUp = p.vy < 0;                 // 补上起爆方向标记（散落态切球型时补建的烟花）
         } else {
           p.fw = false;
           if (!isFinite(p.floorY)) p.floorY = H - 3 - Math.pow(Math.random(), 1.5) * 15;
@@ -629,12 +634,13 @@
 
   /* ---------- 球型粒子：预渲染发光球贴图（按高度分档着色，避免每帧 createRadialGradient） ----------
      每帧给上万颗粒子各建一个径向渐变会直接卡死，故改为：按高度分 24 档预渲染 24 张贴图，
-     绘制时只 drawImage（缩放 + lighter 叠加）。球型抽样渲染（每 3 颗画 1 颗，约 4300 颗），
-     球更大更亮，加上光晕与拖尾后整体依然饱满。 */
+     绘制时只 drawImage（缩放 + lighter 叠加）。球型「飞行中 / 烟花」才抽样（少而大），
+     已归位的粒子全部参与 → 成型后的爱心依然饱满密实。 */
   PARTICLE_STYLE = 'grain';        // 声明已提前到 PRESETS 上方（sampleTarget 顶层执行时要读它）
   const SPHERE_BANDS = 24;         // 高度分档数
-  const SPHERE_STRIDE = 24;        // 彗星抽样间隔：每 24 颗画 1 颗（约 542 颗，少而大）
-  const SPHERE_FW_STRIDE = 14;     // 烟花绽放抽样间隔（约 930 颗）：手机高刷屏降量保流畅；星星点缀补足量感
+  const SPHERE_STRIDE = 13;        // 重聚飞行中抽样间隔：每 13 颗画 1 颗（约 1000 颗，原 24 → 542 颗）
+  const SPHERE_FW_STRIDE_UP = 5;   // 烟花·向上飞的那批（约 1300 颗）：上方烟瓣加厚，落下时即流星，故更密
+  const SPHERE_FW_STRIDE_DOWN = 10;// 烟花·起爆即朝下的那批（约 650 颗）：保持清爽，不与流星抢视线
   const LOCK_EASE = 10;            // 锁定后收尾缓动帧数：彗星光晕平滑收成小圆点（消除"啪一下缩掉"的跳变）
   const LOCK_DIST = 7;             // 吸附阈值（px）：d≤此值即进入落地缓冲，略大于 6 以减少临界阻尼末段"蜗行"
   const LAND_SPREAD = 28;          // 落地缓冲随机错峰帧数：粒子各自延迟 0~28 帧才真正锁定 → 打散"尾部成批咔到位"的台阶感
@@ -762,6 +768,10 @@
         p.vy = Math.sin(ang) * spd + Math.sin(perp) * jit + diry * rand(0.5, 2);
         p.floorY = Infinity;                     // 永不触底（不落在屏幕底下）
         p.fw = true;                             // 烟花标记：fall() 走无边界、无落地的分支
+        // 起爆方向：向上飞的（vy<0）单独标记 → 绘制更密。
+        //   它们先在上方铺出更厚的烟瓣，随后被 FW_GRAV 拉下来，下落时拖尾朝下 = 流星雨。
+        //   标记在爆炸这一刻定死、此后不变 → 不会因方向翻转导致粒子忽隐忽现。
+        p.fwUp = p.vy < 0;
       } else {
         // 爆炸初速：离心为主 + 一点随机扰动；沿切割方向(dirx,diry)再叠加一点冲量
         const spd = rand(3.5, 11);               // 初速大小随机 → 炸开范围有层次
@@ -927,7 +937,7 @@
       }
     }
     reassignSides();        // 左右对应：落点偏左 → 爱心左半，偏右 → 右半（避免粒子横穿屏幕）
-    recomputeOrders(heart); // 重算凹口序/几何序/全局均匀序（含尾段分位表刷新）
+    recomputeOrders(heart);   // 重算几何序（含凹口序）+ 全局数量均匀序
 
     // （曾尝试回退成「全部同时自由飞回」的早期方式，观感不如排队版，已撤销）
     // 尖端收笔：小尾巴最底端那一小撮（几何上极度密集），无论怎么连续映射 order，
@@ -954,7 +964,7 @@
       ? Math.log(1 + n * LG / START_RATE) / LG      // 前段：指数（起飞数逐帧翻增）
       : SWITCH_T + (n - SWITCH_N) / BASE_RATE);     // 后段：恢复原匀速
     let tipIdx = null, tipN = 1, tipStartFrame = 0;
-    if (FORMATION === 'notch') {
+    if (FORMATION === 'notch') {          // 收笔组只属于 notch 序（底端最后）；bottom 序下底端最先，无需收笔
       const tipList = heart.filter(p => p.hy > TIP_HY);
       tipList.sort((a, b) => a.hy - b.hy);    // hy 小的先（尾巴中上），hy 大的最后（最底端）→ 收笔落在最底端
       tipIdx = new Map(); tipN = Math.max(1, tipList.length - 1);
@@ -1314,7 +1324,9 @@
           continue;
         }
         // 烟花绽放 / 飞行归位：抽样（少而大）。烟花比飞行密一些 → 绽放更有量感
-        if (p.idx % (p.fw ? SPHERE_FW_STRIDE : SPHERE_STRIDE) !== 0) continue;
+        // 烟花再按起爆方向分档：向上飞的更密（上方烟瓣厚 + 落下来是流星），朝下的略疏。
+        // 分档依据 p.fwUp 在爆炸瞬间已定死 → 同一颗粒子全程可见性不变，不会闪烁。
+        if (p.idx % (p.fw ? (p.fwUp ? SPHERE_FW_STRIDE_UP : SPHERE_FW_STRIDE_DOWN) : SPHERE_STRIDE) !== 0) continue;
         const spd = Math.hypot(p._dx, p._dy);
         if (p.fw) {   // 烟花绽放：预渲染柔光球 sprite 直接 drawImage（硬件纹理拷贝，零路径/零 trig → 手机高刷屏流畅）+ 实色短拖尾
           const R = p._sz * 1.8;                      // 发光球可视半径（含柔光晕）
@@ -1706,9 +1718,34 @@
   // 与参考文件不同：参考「识别到张开即持续绽放」；本功能需「先握拳、再张开」的过渡才触发一次散开。
   let handEnabled = false;          // 手势开关（面板按钮控制）
   let handReady = false;            // MediaPipe + 摄像头是否就绪
-  let fistSeen = false;             // 本轮是否已出现过握拳（必须先生效，之后张开才触发）
+  let fistSeen = false;             // 本轮是否已出现过握拳（握拳 → 张开 = 散开）
+  let openSeen = false;             // 本轮是否已出现过张开（张开 → 握拳 = 重聚）
   let handVideo = null, handStream = null, hands = null;
   const gestureBtn = document.getElementById('gestureBtn');
+  gestureBtn.title = '握拳 → 张开：散开　|　张开 → 握拳：重聚';
+  // 摄像头预览窗开关：默认关闭（后台静默识别），需要确认画面时再点开
+  const previewBtn = document.getElementById('previewBtn');
+  let previewOn = false;
+  function applyPreview() {
+    if (handVideo) handVideo.style.display = previewOn ? '' : 'none';
+    previewBtn.classList.toggle('on', previewOn);
+    previewBtn.textContent = '预览' + (previewOn ? ' · 开' : '');
+  }
+  // 没有画面可显示时（手势关闭 / 开启失败）：按钮回到未选态，避免「亮着却没有预览窗」。
+  // previewOn 本身不动 → 下次成功开启手势时会自动恢复成你上次的选择。
+  function resetPreviewBtn() {
+    previewBtn.classList.remove('on');
+    previewBtn.textContent = '预览';
+  }
+  previewBtn.addEventListener('click', () => {
+    if (!handEnabled || !handVideo) {          // 手势未开启 → 没有可预览的画面
+      previewBtn.textContent = '预览（先开手势）';
+      setTimeout(() => { previewBtn.textContent = '预览' + (previewOn ? ' · 开' : ''); }, 1200);
+      return;
+    }
+    previewOn = !previewOn;
+    applyPreview();
+  });
 
   // 复用参考文件判定：四指指尖到腕距 > PIP到腕距*1.12 算伸直；拇指横向张开（指尖比拇指根更靠外）
   function checkOpenHand(lm) {
@@ -1735,24 +1772,64 @@
     }
     return bent >= 3;
   }
+  // 诊断状态（浮层显示：识别帧率 / 检测到手否 / 判定结果）—— 诊断期临时使用
+  const diag = { frames: 0, fps: 0, hasHand: false, isFist: false, isOpen: false, lastSendMs: 0, err: '' };
+
   function onHandResults(res) {
     if (!res.multiHandLandmarks || res.multiHandLandmarks.length === 0) {
-      fistSeen = false;             // 手离开画面 → 重置，下次需重新握拳
+      // 手离开画面 → 两个哨兵都重置，下次需重新做起手姿势
+      fistSeen = false; openSeen = false;
+      diag.hasHand = false; diag.isFist = false; diag.isOpen = false;
       return;
     }
     const lm = res.multiHandLandmarks[0];
-    if (checkFist(lm)) fistSeen = true;                  // 出现过握拳 → 置位
-    if (checkOpenHand(lm) && fistSeen) {                 // 之后张开五指 → 触发一次散开
-      fistSeen = false;                                  // 一次性消费，避免持续张开重复触发
-      if (heartReady && !scattered) scatter(0, 0);        // 效果同切割散开（全局触发，不要求划过爱心）
+    diag.hasHand = true;
+    diag.isFist = checkFist(lm);
+    diag.isOpen = checkOpenHand(lm);
+    // 两个动作互为反向、可连续交替：握拳→张开=散开，张开→握拳=重聚。
+    // 每次到位都「消费上一个哨兵 + 置位自己的哨兵」，故持续保持同一姿势不会重复触发。
+    if (diag.isFist) {
+      // 张开 → 握拳：复原。需碎片已落定（与点击复原同一条件），未落定时握拳先不生效
+      if (openSeen && scattered && allSettled()) reform();
+      openSeen = false; fistSeen = true;
+    } else if (diag.isOpen) {
+      // 握拳 → 张开：散开（效果同切割，全局触发，不要求划过爱心）
+      if (fistSeen && heartReady && !scattered) scatter(0, 0);
+      fistSeen = false; openSeen = true;
     }
   }
-  async function handSendLoop() {
+  // 识别循环：用「不阻塞下一帧」的写法——先排下一帧，再发当前帧，避免 send() 挂起把循环卡死
+  function handSendLoop() {
     if (!handEnabled || !hands || !handVideo) return;
+    requestAnimationFrame(handSendLoop);                 // 先排下一帧（关键：send 挂起也不影响继续排帧）
     if (handVideo.readyState >= 2) {
-      try { await hands.send({ image: handVideo }); } catch (_) {}
+      const t0 = performance.now();
+      hands.send({ image: handVideo }).then(() => {
+        diag.frames++; diag.lastSendMs = Math.round(performance.now() - t0);
+      }).catch(e => { diag.err = String(e && e.message || e); });
     }
-    requestAnimationFrame(handSendLoop);
+  }
+  // 诊断浮层：把隐藏 video 显示成小窗 + 叠加状态文字
+  function setupDiag() {
+    if (!handVideo || document.getElementById('handDiag')) return;
+    handVideo.style.cssText = 'position:fixed;right:8px;bottom:8px;width:150px;height:112px;'
+      + 'object-fit:cover;opacity:0.9;z-index:9998;transform:scaleX(-1);border:1px solid rgba(255,255,255,.4);border-radius:8px;';
+    const box = document.createElement('div');
+    box.id = 'handDiag';
+    box.style.cssText = 'position:fixed;right:8px;bottom:104px;z-index:9999;font:11px/1.5 monospace;'
+      + 'color:#0f0;background:rgba(0,0,0,.6);padding:4px 6px;border-radius:6px;white-space:pre;';
+    document.body.appendChild(box);
+    setInterval(() => {
+      diag.fps = diag.frames; diag.frames = 0;
+      box.textContent = 'FPS ' + diag.fps
+        + '\n手 ' + (diag.hasHand ? '有' : '无')
+        + '\n握拳 ' + (diag.isFist ? 'Y' : 'n')
+        + '\n张开 ' + (diag.isOpen ? 'Y' : 'n')
+        + '\n拳哨兵 ' + (fistSeen ? 'Y' : 'n') + ' 张哨兵 ' + (openSeen ? 'Y' : 'n')
+        + '\nsend ' + diag.lastSendMs + 'ms'
+        + (diag.err ? '\nERR ' + diag.err.slice(0, 40) : '');
+    }, 1000);
+    applyPreview();          // 新预览窗遵循当前开关状态（默认隐藏）
   }
   function loadScript(src) {
     return new Promise((resolve, reject) => {
@@ -1790,23 +1867,30 @@
       hands.onResults(onHandResults);
       handReady = true;
       gestureBtn.textContent = '手势 · 已开启';
+      setupDiag();
       handSendLoop();
     } catch (e) {
       handEnabled = false; handReady = false;            // 摄像头/权限失败：保留原有划屏切割作兜底
       gestureBtn.classList.remove('on');
-      gestureBtn.textContent = '手势（摄像头不可用）';
+      const msg = String(e && e.message || e);
+      gestureBtn.textContent = '手势（失败：' + msg.slice(0, 18) + '）';
       if (handStream) { handStream.getTracks().forEach(t => t.stop()); handStream = null; }
       if (handVideo) { handVideo.remove(); handVideo = null; }
+      const dbg = document.getElementById('handDiag'); if (dbg) dbg.remove();
+      resetPreviewBtn();
     }
   }
   function disableGesture() {
-    handEnabled = false; handReady = false; fistSeen = false;
+    handEnabled = false; handReady = false; fistSeen = false; openSeen = false;
     if (hands && hands.close) { try { hands.close(); } catch (_) {} }
     hands = null;
     if (handStream) { handStream.getTracks().forEach(t => t.stop()); handStream = null; }
     if (handVideo) { handVideo.remove(); handVideo = null; }
+    const dbg = document.getElementById('handDiag');
+    if (dbg) dbg.remove();
     gestureBtn.classList.remove('on');
     gestureBtn.textContent = '手势';
+    resetPreviewBtn();
   }
   gestureBtn.addEventListener('click', () => { handEnabled ? disableGesture() : enableGesture(); });
 
