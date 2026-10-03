@@ -87,6 +87,12 @@
     <div class="menu">
       <button data-sand="rotate">细沙方粒</button>
       <button data-sand="sphere" class="on">粒子球体</button>
+      <div class="divider"></div>
+      <button data-star="0" class="on">银芒</button>
+      <button data-star="1">银星</button>
+      <button data-star="2">银钻</button>
+      <button data-star="3">银流星</button>
+      <button data-star="off">关闭</button>
     </div>
   </div>
   <div class="dropdown" id="ddPose">
@@ -98,18 +104,7 @@
       <button data-b="beat">跳动</button>
     </div>
   </div>
-  <div class="dropdown">
-    <button class="dropbtn">微星效果 ▾</button>
-    <div class="menu">
-      <button data-star="0" class="on">银芒</button>
-      <button data-star="1">银星</button>
-      <button data-star="2">银钻</button>
-      <button data-star="3">银流星</button>
-      <button data-star="off">关闭</button>
-    </div>
-  </div>
   <button id="gestureBtn">手势</button>
-  <button id="previewBtn" title="显示/隐藏右下角的摄像头预览窗（默认关闭，识别照常后台运行）">预览</button>
   <!-- 颜色调节器：紧跟在「动作」按钮右侧（同一行内流动排版） -->
   <div id="colorbox">
     <label class="grad">顶部<input type="color" id="colTop" value="#ffffff"></label>
@@ -125,6 +120,10 @@
   const ctx = canvas.getContext('2d');
 
   let W, H, CX, CY, S, DPR;
+
+  // 流星雨离屏层：透明底，每帧清空后绘制流星+闪星，再合成到主画布（不影响爱心拖尾、不留残影）
+  const meteorCanvas = document.createElement('canvas');
+  const mctx = meteorCanvas.getContext('2d');
   function resize() {
     // 按设备像素比放大画布：高清屏（手机 DPR 2~3）上粒子才是锐利的，不再糊成一团
     DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -135,6 +134,7 @@
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    meteorCanvas.width = W; meteorCanvas.height = H;   // 逻辑像素（不乘 DPR）：流星细线略糊可接受，省算力
     CX = W / 2;
     CY = H / 2 - H * 0.02;
     S = Math.min(W, H) * 0.0195;  // 心形占屏约 63~68%（整体放大；粒子数量同步增加，不靠放大半径）
@@ -639,8 +639,8 @@
   PARTICLE_STYLE = 'grain';        // 声明已提前到 PRESETS 上方（sampleTarget 顶层执行时要读它）
   const SPHERE_BANDS = 24;         // 高度分档数
   const SPHERE_STRIDE = 13;        // 重聚飞行中抽样间隔：每 13 颗画 1 颗（约 1000 颗，原 24 → 542 颗）
-  const SPHERE_FW_STRIDE_UP = 5;   // 烟花·向上飞的那批（约 1300 颗）：上方烟瓣加厚，落下时即流星，故更密
-  const SPHERE_FW_STRIDE_DOWN = 10;// 烟花·起爆即朝下的那批（约 650 颗）：保持清爽，不与流星抢视线
+  const SPHERE_FW_STRIDE_UP = 7;   // 烟花·向上飞的那批（约 930 颗）：上方烟瓣适度加厚，落下时成流星
+  const SPHERE_FW_STRIDE_DOWN = 12;// 烟花·起爆即朝下的那批（约 540 颗）：更清爽，不与流星抢视线
   const LOCK_EASE = 10;            // 锁定后收尾缓动帧数：彗星光晕平滑收成小圆点（消除"啪一下缩掉"的跳变）
   const LOCK_DIST = 7;             // 吸附阈值（px）：d≤此值即进入落地缓冲，略大于 6 以减少临界阻尼末段"蜗行"
   const LAND_SPREAD = 28;          // 落地缓冲随机错峰帧数：粒子各自延迟 0~28 帧才真正锁定 → 打散"尾部成批咔到位"的台阶感
@@ -1084,6 +1084,14 @@
 
     ctx.fillStyle = 'rgba(0, 0, 0, 0.36)';
     ctx.fillRect(0, 0, W, H);
+
+    // 比耶 ✌ 触发的流星雨（离屏透明层，最底层背景；一阵放完自动停，不影响爱心拖尾）
+    if (meteorCool > 0) meteorCool--;
+    if (meteorTimer > 0) meteorTimer--;
+    if (meteorActive) {
+      if (meteorTimer <= 0 && meteors.length === 0 && flares.length === 0) meteorActive = false;
+      else { meteorUpdateDraw(); ctx.drawImage(meteorCanvas, 0, 0, W, H); }
+    }
 
     // 心跳仅在爱心完全成型且未散落时才生效：首生成 / 切割散落 / 复原过程中尺寸恒定、不跳动、不喷粒子
     const scaleNow = (BEAT && heartReady && !scattered) ? S * (1 + heartbeat(now) * 0.18) : S;
@@ -1578,6 +1586,7 @@
     requestAnimationFrame(loop);
   }
 
+
   // 左上角切换成型方式：仅记录「待生效」方式，不重生成当前爱心；下一次切割→聚合时自动套用
   document.querySelectorAll('#panel button[data-m]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1697,6 +1706,7 @@
     });
   });
 
+
   // 下拉菜单（形成方式 / 重聚背景 / 动作 / 微星效果）：点击展开，点子项或空白处收起
   document.querySelectorAll('#panel .dropdown').forEach(dd => {
     const dropbtn = dd.querySelector('.dropbtn');
@@ -1720,128 +1730,163 @@
   let handReady = false;            // MediaPipe + 摄像头是否就绪
   let fistSeen = false;             // 本轮是否已出现过握拳（握拳 → 张开 = 散开）
   let openSeen = false;             // 本轮是否已出现过张开（张开 → 握拳 = 重聚）
+  let handGone = 0;                 // 连续无手帧计数：短暂跟踪丢失不重置哨兵（快速换手势时防误清）
+  let peaceHold = 0;                // 比耶连续保持帧数：需保持约 5 帧才触发（过滤握拳→张开过渡态）
   let handVideo = null, handStream = null, hands = null;
   const gestureBtn = document.getElementById('gestureBtn');
-  gestureBtn.title = '握拳 → 张开：散开　|　张开 → 握拳：重聚';
-  // 摄像头预览窗开关：默认关闭（后台静默识别），需要确认画面时再点开
-  const previewBtn = document.getElementById('previewBtn');
-  let previewOn = false;
-  function applyPreview() {
-    if (handVideo) handVideo.style.display = previewOn ? '' : 'none';
-    previewBtn.classList.toggle('on', previewOn);
-    previewBtn.textContent = '预览' + (previewOn ? ' · 开' : '');
-  }
-  // 没有画面可显示时（手势关闭 / 开启失败）：按钮回到未选态，避免「亮着却没有预览窗」。
-  // previewOn 本身不动 → 下次成功开启手势时会自动恢复成你上次的选择。
-  function resetPreviewBtn() {
-    previewBtn.classList.remove('on');
-    previewBtn.textContent = '预览';
-  }
-  previewBtn.addEventListener('click', () => {
-    if (!handEnabled || !handVideo) {          // 手势未开启 → 没有可预览的画面
-      previewBtn.textContent = '预览（先开手势）';
-      setTimeout(() => { previewBtn.textContent = '预览' + (previewOn ? ' · 开' : ''); }, 1200);
-      return;
-    }
-    previewOn = !previewOn;
-    applyPreview();
-  });
+  gestureBtn.title = '握拳 → 张开：散开　|　张开 → 握拳：重聚　|　比耶 ✌：一阵流星雨';
 
-  // 复用参考文件判定：四指指尖到腕距 > PIP到腕距*1.12 算伸直；拇指横向张开（指尖比拇指根更靠外）
+  // ===== 比耶 ✌ 触发流星雨（离屏透明层 · 一阵即止 · 含银色闪星）=====
+  const METEOR_STYLES = {
+    minimal: { density:.34, max:16, speed:[11,18], len:[160,360], width:[.8,1.4], angMin:.45, angMax:1.05, glow:0,   head:false, cols:[[255,255,255],[218,230,255]] },
+    warm:    { density:.40, max:12, speed:[8,14],  len:[170,420], width:[1,2.4],  angMin:.40, angMax:1.00, glow:.9,  head:true, headScale:1.1, cols:[[255,210,170],[255,180,200],[255,230,190]] }
+  };
+  let meteorActive = false, meteorTimer = 0, meteorCool = 0, meteorStyle = 'minimal';
+  const meteors = [], flares = [];
+  function meteorTrigger(style) { meteorStyle = style; meteorActive = true; meteorTimer = 150; }   // 约 2.5s 生成期
+  function meteorSpawn() {
+    const s = METEOR_STYLES[meteorStyle];
+    let x, y;
+    if (Math.random() < 0.55) { x = Math.random() * W * 1.1 - W * 0.05; y = -Math.random() * H * 0.5 - 20; }
+    else { x = -Math.random() * W * 0.3 - 20; y = Math.random() * H * 1.1 - H * 0.05; }
+    const ang = s.angMin + Math.random() * (s.angMax - s.angMin);          // 斜向右下（每颗抖动，不严格一致）
+    const sp = s.speed[0] + Math.random() * (s.speed[1] - s.speed[0]);
+    const c = s.cols[(Math.random() * s.cols.length) | 0];
+    meteors.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+      len: s.len[0] + Math.random() * (s.len[1] - s.len[0]), w: s.width[0] + Math.random() * (s.width[1] - s.width[0]),
+      life: 0, maxLife: 55 + Math.random() * 65, r: c[0], g: c[1], b: c[2] });
+  }
+  // 亮银色闪星：实心核心(实) + 暗淡银蓝小光晕，整体偏小
+  function drawStar(x, y, r, a) {
+    const R = r * 3; const g = mctx.createRadialGradient(x, y, 0, x, y, R);
+    g.addColorStop(0, `rgba(238,244,255,${a})`);
+    g.addColorStop(0.30, `rgba(205,220,248,${a * 0.28})`);
+    g.addColorStop(1, `rgba(205,220,248,0)`);
+    mctx.fillStyle = g; mctx.beginPath(); mctx.arc(x, y, R, 0, 6.283); mctx.fill();
+    mctx.fillStyle = `rgba(244,248,255,${a})`;
+    mctx.beginPath(); mctx.arc(x, y, r * 0.72, 0, 6.283); mctx.fill();
+  }
+  function meteorUpdateDraw() {
+    const s = METEOR_STYLES[meteorStyle];
+    mctx.clearRect(0, 0, W, H);
+    // 生成（仅阵雨期内）
+    if (meteorTimer > 0 && meteors.length < s.max && Math.random() < s.density) meteorSpawn();
+    if (meteorTimer > 0 && Math.random() < 0.16) flares.push({ x: Math.random() * W, y: Math.random() * H, life: 0, maxLife: 24 + Math.random() * 30, r: 0.4 + Math.random() * 0.45 });
+    // 流星
+    mctx.globalCompositeOperation = s.glow > 0 ? 'lighter' : 'source-over';
+    for (let i = meteors.length - 1; i >= 0; i--) {
+      const m = meteors[i]; m.x += m.vx; m.y += m.vy; m.life++;
+      if (m.y > H + 80 || m.x > W + 80 || m.life > m.maxLife) { meteors.splice(i, 1); continue; }
+      const d = Math.hypot(m.vx, m.vy) || 1;
+      const tx = m.x - m.vx / d * m.len, ty = m.y - m.vy / d * m.len;
+      const fade = Math.max(0, 1 - m.life / m.maxLife) * 0.95;
+      if (s.glow > 0) {
+        const grd = mctx.createLinearGradient(m.x, m.y, tx, ty);
+        grd.addColorStop(0, `rgba(${m.r},${m.g},${m.b},${fade})`);
+        grd.addColorStop(1, `rgba(${m.r},${m.g},${m.b},0)`);
+        mctx.strokeStyle = grd; mctx.lineWidth = m.w * (s.glow > 1 ? 1.4 : 1); mctx.lineCap = 'round';
+        mctx.beginPath(); mctx.moveTo(m.x, m.y); mctx.lineTo(tx, ty); mctx.stroke();
+        if (s.head) { mctx.fillStyle = `rgba(255,255,255,${fade})`; mctx.beginPath(); mctx.arc(m.x, m.y, m.w * (s.headScale || 1.6), 0, 6.283); mctx.fill(); }
+      } else {
+        mctx.strokeStyle = `rgba(${m.r},${m.g},${m.b},${fade})`; mctx.lineWidth = m.w; mctx.lineCap = 'round';
+        mctx.beginPath(); mctx.moveTo(m.x, m.y); mctx.lineTo(tx, ty); mctx.stroke();
+      }
+    }
+    // 闪星
+    mctx.globalCompositeOperation = 'lighter';
+    for (let i = flares.length - 1; i >= 0; i--) {
+      const f = flares[i]; f.life++;
+      if (f.life > f.maxLife) { flares.splice(i, 1); continue; }
+      drawStar(f.x, f.y, f.r, Math.sin(f.life / f.maxLife * Math.PI) * 0.95);
+    }
+    mctx.globalCompositeOperation = 'source-over';
+  }
+  // 三种手势 = 数「伸直手指个数」，伸直数互不重叠：握拳=0、比耶=2、张开=4。
+  // 统一阈值：伸直 = 指尖到腕距 > 中节到腕距 × 1.08。
+  // 比耶（✌ V 手势）：食指 + 中指伸直，无名指 + 小指弯曲。
+  // 注意：握拳→张开的过程会短暂经过「两指伸直」态，故比耶需连续保持数帧（peaceHold）才触发，
+  //       一晃而过的过渡态不会满足保持帧数，不会误触流星雨。
+  function checkPeace(lm) {
+    const w = lm[0];
+    const dW = n => Math.hypot(lm[n].x - w.x, lm[n].y - w.y);
+    const ext = n => dW(n) > dW(n - 2) * 1.08;                     // 四指伸直判定（n=8/12/16/20 → 中节 6/10/14/18）
+    return ext(8) && ext(12) && !ext(16) && !ext(20);
+  }
+
+  // 张开 =「五指伸直」：四指 + 拇指全伸直。
   function checkOpenHand(lm) {
     const w = lm[0];
-    const fingers = [[8, 6], [12, 10], [16, 14], [20, 18]];
-    let up = 0;
-    for (const [tip, pip] of fingers) {
-      const dT = Math.hypot(lm[tip].x - w.x, lm[tip].y - w.y);
-      const dP = Math.hypot(lm[pip].x - w.x, lm[pip].y - w.y);
-      if (dT > dP * 1.12) up++;
-    }
-    const thumbOpen = Math.abs(lm[4].x - w.x) > Math.abs(lm[2].x - w.x) * 1.12;
-    return up === 4 && thumbOpen;
+    const dW = n => Math.hypot(lm[n].x - w.x, lm[n].y - w.y);
+    const ext = n => dW(n) > dW(n - 2) * 1.08;
+    const thumbUp = dW(4) > dW(3) * 1.08;
+    return ext(8) && ext(12) && ext(16) && ext(20) && thumbUp;
   }
-  // 反向：指尖比 PIP 更靠近手腕 = 弯曲；≥3 指弯曲即算握拳
+
+  // 握拳 =「四指弯曲」：食指必弯，中/无名/小指最多一根伸直（容一根略松，如小指）。
   function checkFist(lm) {
     const w = lm[0];
-    const fingers = [[8, 6], [12, 10], [16, 14], [20, 18]];
-    let bent = 0;
-    for (const [tip, pip] of fingers) {
-      const dT = Math.hypot(lm[tip].x - w.x, lm[tip].y - w.y);
-      const dP = Math.hypot(lm[pip].x - w.x, lm[pip].y - w.y);
-      if (dT < dP * 0.95) bent++;
-    }
-    return bent >= 3;
+    const dW = n => Math.hypot(lm[n].x - w.x, lm[n].y - w.y);
+    const ext = n => dW(n) > dW(n - 2) * 1.08;
+    const othersExt = (ext(12) ? 1 : 0) + (ext(16) ? 1 : 0) + (ext(20) ? 1 : 0);
+    return !ext(8) && othersExt <= 1;
   }
-  // 诊断状态（浮层显示：识别帧率 / 检测到手否 / 判定结果）—— 诊断期临时使用
-  const diag = { frames: 0, fps: 0, hasHand: false, isFist: false, isOpen: false, lastSendMs: 0, err: '' };
-
   function onHandResults(res) {
     if (!res.multiHandLandmarks || res.multiHandLandmarks.length === 0) {
-      // 手离开画面 → 两个哨兵都重置，下次需重新做起手姿势
-      fistSeen = false; openSeen = false;
-      diag.hasHand = false; diag.isFist = false; diag.isOpen = false;
+      // 连续约 1/3 秒无手才重置哨兵：快速换手势时 MediaPipe 常有一两帧跟踪丢失，
+      // 若立即清空会把「握拳→张开」中途的哨兵抹掉，导致散开/重聚失灵。
+      if (++handGone > 20) { fistSeen = false; openSeen = false; }
       return;
     }
+    handGone = 0;
     const lm = res.multiHandLandmarks[0];
-    diag.hasHand = true;
-    diag.isFist = checkFist(lm);
-    diag.isOpen = checkOpenHand(lm);
-    // 两个动作互为反向、可连续交替：握拳→张开=散开，张开→握拳=重聚。
-    // 每次到位都「消费上一个哨兵 + 置位自己的哨兵」，故持续保持同一姿势不会重复触发。
-    if (diag.isFist) {
+    // 比耶 ✌ 优先：需连续保持约 5 帧才触发（握拳→张开过渡态一晃而过、凑不满帧数），防连发靠 meteorCool
+    if (checkPeace(lm)) {
+      peaceHold++;
+      if (peaceHold >= 5 && meteorCool <= 0) {
+        meteorTrigger(Math.random() < 0.5 ? 'minimal' : 'warm');
+        meteorCool = 60;
+        peaceHold = 0;   // 触发后归零：必须「松开再比耶」才会再放一阵，长按不连发
+      }
+    // 握拳→张开=散开，张开→握拳=重聚。每次到位都「消费上一个哨兵 + 置位自己的哨兵」，持续同一姿势不重复触发。
+    } else if (checkFist(lm)) {
+      peaceHold = 0;
       // 张开 → 握拳：复原。需碎片已落定（与点击复原同一条件），未落定时握拳先不生效
-      if (openSeen && scattered && allSettled()) reform();
+      if (openSeen && scattered && allSettled()) { reform(); handCool = 30; }   // 重聚：同样让路 0.5s
       openSeen = false; fistSeen = true;
-    } else if (diag.isOpen) {
+    } else if (checkOpenHand(lm)) {
+      peaceHold = 0;
       // 握拳 → 张开：散开（效果同切割，全局触发，不要求划过爱心）
-      if (fistSeen && heartReady && !scattered) scatter(0, 0);
+      if (fistSeen && heartReady && !scattered) { scatter(0, 0); handCool = 45; }  // 爆炸：识别让路约 0.75s
       fistSeen = false; openSeen = true;
+    } else {
+      peaceHold = 0;
     }
   }
   // 识别循环：先排下一帧（保证 send 挂起也不会卡死循环），再用「忙标志」串行化。
   //   必须串行：MediaPipe 处理一张要几十 ms，若每帧都塞（手机 90/120Hz），队列会迅速堆积 →
-  //   WASM 堆越界（memory access out of bounds）、识别停摆、ERR 刷屏。
+  //   WASM 堆越界（memory access out of bounds）、识别停摆。
   //   旧版用 await 天然串行所以没事；改非阻塞后必须补回这个「一次只送一张」的约束。
   let handBusy = false;
+  let handCool = 0;                                      // 识别冷却帧数：手势触发爆炸后短暂让路，算力全给爆炸动画
   function handSendLoop() {
     if (!handEnabled || !hands || !handVideo) return;
     requestAnimationFrame(handSendLoop);                 // 先排下一帧
+    if (handCool > 0) { handCool--; return; }            // 冷却期内不发图（爆炸瞬间让路，手感无影响：动作已完成）
     if (handBusy) return;                                // 上一张还没处理完 → 本帧跳过（关键：防堆积）
     if (handVideo.readyState >= 2) {
       handBusy = true;
-      const t0 = performance.now();
       hands.send({ image: handVideo }).then(() => {
-        diag.frames++; diag.lastSendMs = Math.round(performance.now() - t0);
-        handBusy = false;                                  // 成功 → 解锁
+        handBusy = false;                                // 成功 → 解锁
       }, e => {
-        diag.err = String(e && e.message || e);
-        // WASM 堆越界属不可恢复错误：停掉识别，避免疯狂重试刷屏（按钮保持开启，用户可手动关掉重开）
-        if (/memory access out of bounds|out of memory/i.test(diag.err)) handEnabled = false;
-        handBusy = false;                                  // 失败 → 也解锁（不用 .finally，兼容老浏览器）
+        // WASM 堆越界属不可恢复错误：停掉识别并复位按钮，避免「看着是开启、实则已死」的欺骗状态
+        if (/memory access out of bounds|out of memory/i.test(String(e && e.message || e))) {
+          handEnabled = false; handReady = false;
+          gestureBtn.classList.remove('on');
+          gestureBtn.textContent = '手势（异常，可重开）';
+        }
+        handBusy = false;                                // 失败 → 也解锁（不用 .finally，兼容老浏览器）
       });
     }
-  }
-  // 诊断浮层：把隐藏 video 显示成小窗 + 叠加状态文字
-  function setupDiag() {
-    if (!handVideo || document.getElementById('handDiag')) return;
-    handVideo.style.cssText = 'position:fixed;right:8px;bottom:8px;width:150px;height:112px;'
-      + 'object-fit:cover;opacity:0.9;z-index:9998;transform:scaleX(-1);border:1px solid rgba(255,255,255,.4);border-radius:8px;';
-    const box = document.createElement('div');
-    box.id = 'handDiag';
-    box.style.cssText = 'position:fixed;right:8px;bottom:104px;z-index:9999;font:11px/1.5 monospace;'
-      + 'color:#0f0;background:rgba(0,0,0,.6);padding:4px 6px;border-radius:6px;white-space:pre;';
-    document.body.appendChild(box);
-    setInterval(() => {
-      diag.fps = diag.frames; diag.frames = 0;
-      box.textContent = 'FPS ' + diag.fps
-        + '\n手 ' + (diag.hasHand ? '有' : '无')
-        + '\n握拳 ' + (diag.isFist ? 'Y' : 'n')
-        + '\n张开 ' + (diag.isOpen ? 'Y' : 'n')
-        + '\n拳哨兵 ' + (fistSeen ? 'Y' : 'n') + ' 张哨兵 ' + (openSeen ? 'Y' : 'n')
-        + '\nsend ' + diag.lastSendMs + 'ms'
-        + (diag.err ? '\nERR ' + diag.err.slice(0, 40) : '');
-    }, 1000);
-    applyPreview();          // 新预览窗遵循当前开关状态（默认隐藏）
   }
   function loadScript(src) {
     return new Promise((resolve, reject) => {
@@ -1862,7 +1907,6 @@
   async function enableGesture() {
     handEnabled = true;
     gestureBtn.classList.add('on');
-    gestureBtn.textContent = '手势 · 开启中';
     try {
       if (typeof Hands === 'undefined') {
         await withTimeout(loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js'), 10000, '手势模型加载超时');
@@ -1874,40 +1918,33 @@
       // 分辨率上限 640×480：手机默认可能给 1080p，帧数据过大会撑爆 MediaPipe 的 WASM 堆
       //   （报错 memory access out of bounds）。识别本身也不需要高分辨率。
       handStream = await withTimeout(navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640, max: 640 }, height: { ideal: 480, max: 480 } },
+        video: { facingMode: 'user', width: { ideal: 480, max: 640 }, height: { ideal: 360, max: 480 } },
         audio: false
       }), 8000, '摄像头请求超时');
       handVideo.srcObject = handStream;
       await handVideo.play();
       hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}` });
-      hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+      hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
       hands.onResults(onHandResults);
       handReady = true;
-      gestureBtn.textContent = '手势 · 已开启';
-      setupDiag();
       handSendLoop();
     } catch (e) {
-      handEnabled = false; handReady = false; handBusy = false;   // 摄像头/权限失败：保留原有划屏切割作兜底
+      handEnabled = false; handReady = false; handBusy = false; handCool = 0;   // 摄像头/权限失败：保留原有划屏切割作兜底
       gestureBtn.classList.remove('on');
       const msg = String(e && e.message || e);
       gestureBtn.textContent = '手势（失败：' + msg.slice(0, 18) + '）';
       if (handStream) { handStream.getTracks().forEach(t => t.stop()); handStream = null; }
       if (handVideo) { handVideo.remove(); handVideo = null; }
-      const dbg = document.getElementById('handDiag'); if (dbg) dbg.remove();
-      resetPreviewBtn();
     }
   }
   function disableGesture() {
-    handEnabled = false; handReady = false; fistSeen = false; openSeen = false; handBusy = false;
+    handEnabled = false; handReady = false; fistSeen = false; openSeen = false; handGone = 0; peaceHold = 0; handBusy = false; handCool = 0;
     if (hands && hands.close) { try { hands.close(); } catch (_) {} }
     hands = null;
     if (handStream) { handStream.getTracks().forEach(t => t.stop()); handStream = null; }
     if (handVideo) { handVideo.remove(); handVideo = null; }
-    const dbg = document.getElementById('handDiag');
-    if (dbg) dbg.remove();
     gestureBtn.classList.remove('on');
     gestureBtn.textContent = '手势';
-    resetPreviewBtn();
   }
   gestureBtn.addEventListener('click', () => { handEnabled ? disableGesture() : enableGesture(); });
 
