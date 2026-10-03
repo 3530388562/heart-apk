@@ -1798,15 +1798,27 @@
       fistSeen = false; openSeen = true;
     }
   }
-  // 识别循环：用「不阻塞下一帧」的写法——先排下一帧，再发当前帧，避免 send() 挂起把循环卡死
+  // 识别循环：先排下一帧（保证 send 挂起也不会卡死循环），再用「忙标志」串行化。
+  //   必须串行：MediaPipe 处理一张要几十 ms，若每帧都塞（手机 90/120Hz），队列会迅速堆积 →
+  //   WASM 堆越界（memory access out of bounds）、识别停摆、ERR 刷屏。
+  //   旧版用 await 天然串行所以没事；改非阻塞后必须补回这个「一次只送一张」的约束。
+  let handBusy = false;
   function handSendLoop() {
     if (!handEnabled || !hands || !handVideo) return;
-    requestAnimationFrame(handSendLoop);                 // 先排下一帧（关键：send 挂起也不影响继续排帧）
+    requestAnimationFrame(handSendLoop);                 // 先排下一帧
+    if (handBusy) return;                                // 上一张还没处理完 → 本帧跳过（关键：防堆积）
     if (handVideo.readyState >= 2) {
+      handBusy = true;
       const t0 = performance.now();
       hands.send({ image: handVideo }).then(() => {
         diag.frames++; diag.lastSendMs = Math.round(performance.now() - t0);
-      }).catch(e => { diag.err = String(e && e.message || e); });
+        handBusy = false;                                  // 成功 → 解锁
+      }, e => {
+        diag.err = String(e && e.message || e);
+        // WASM 堆越界属不可恢复错误：停掉识别，避免疯狂重试刷屏（按钮保持开启，用户可手动关掉重开）
+        if (/memory access out of bounds|out of memory/i.test(diag.err)) handEnabled = false;
+        handBusy = false;                                  // 失败 → 也解锁（不用 .finally，兼容老浏览器）
+      });
     }
   }
   // 诊断浮层：把隐藏 video 显示成小窗 + 叠加状态文字
@@ -1859,7 +1871,12 @@
       handVideo.setAttribute('playsinline', ''); handVideo.muted = true;
       handVideo.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
       document.body.appendChild(handVideo);
-      handStream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }), 8000, '摄像头请求超时');
+      // 分辨率上限 640×480：手机默认可能给 1080p，帧数据过大会撑爆 MediaPipe 的 WASM 堆
+      //   （报错 memory access out of bounds）。识别本身也不需要高分辨率。
+      handStream = await withTimeout(navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640, max: 640 }, height: { ideal: 480, max: 480 } },
+        audio: false
+      }), 8000, '摄像头请求超时');
       handVideo.srcObject = handStream;
       await handVideo.play();
       hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}` });
@@ -1870,7 +1887,7 @@
       setupDiag();
       handSendLoop();
     } catch (e) {
-      handEnabled = false; handReady = false;            // 摄像头/权限失败：保留原有划屏切割作兜底
+      handEnabled = false; handReady = false; handBusy = false;   // 摄像头/权限失败：保留原有划屏切割作兜底
       gestureBtn.classList.remove('on');
       const msg = String(e && e.message || e);
       gestureBtn.textContent = '手势（失败：' + msg.slice(0, 18) + '）';
@@ -1881,7 +1898,7 @@
     }
   }
   function disableGesture() {
-    handEnabled = false; handReady = false; fistSeen = false; openSeen = false;
+    handEnabled = false; handReady = false; fistSeen = false; openSeen = false; handBusy = false;
     if (hands && hands.close) { try { hands.close(); } catch (_) {} }
     hands = null;
     if (handStream) { handStream.getTracks().forEach(t => t.stop()); handStream = null; }
